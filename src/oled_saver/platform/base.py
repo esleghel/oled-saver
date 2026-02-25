@@ -127,7 +127,7 @@ class Platform(ABC):
 class LinuxPlatform(Platform):
     """Base platform for Linux (shared KDE/GNOME functionality)."""
 
-    PID_FILE = Path("/tmp") / f"oled-saver-{os.getuid()}.pid"
+    PID_FILE = Path("/tmp") / f"oled-saver-{os.getuid() if hasattr(os, 'getuid') else 0}.pid"
 
     def __init__(self):
         self._idle_poll_timer = None
