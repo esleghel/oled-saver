@@ -1,7 +1,11 @@
 """Main application controller for OLED Saver."""
 
+import logging
+import os
 import sys
+import traceback
 from datetime import datetime
+from pathlib import Path
 
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QObject
 from PyQt6.QtGui import QColor, QCursor, QIcon, QPainter, QPixmap
@@ -585,24 +589,53 @@ class OledBlanker:
         self.platform.cleanup()
 
 
+def _setup_logging():
+    """Setup file logging (especially useful on Windows where there's no console)."""
+    if sys.platform == "win32":
+        log_dir = Path(os.environ.get("APPDATA", Path.home())) / "OLED Saver"
+    else:
+        log_dir = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "oled-saver"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "oled-saver.log"
+
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(log_file, encoding="utf-8"),
+            logging.StreamHandler(sys.stderr),
+        ],
+    )
+    logging.info(f"OLED Saver starting — log: {log_file}")
+    return log_file
+
+
 def main():
-    platform = detect_platform()
-    print(f"Platform: {type(platform).__name__}")
+    log_file = _setup_logging()
+    log = logging.getLogger(__name__)
 
-    is_running, old_pid = platform.check_single_instance()
-    if is_running:
-        print(f"Already running (PID {old_pid}). Sending toggle.", file=sys.stderr)
-        if old_pid:
-            platform.send_toggle(old_pid)
+    try:
+        platform = detect_platform()
+        log.info(f"Platform: {type(platform).__name__}")
+
+        is_running, old_pid = platform.check_single_instance()
+        if is_running:
+            log.warning(f"Already running (PID {old_pid}). Sending toggle.")
+            if old_pid:
+                platform.send_toggle(old_pid)
+            sys.exit(1)
+
+        app = QApplication(sys.argv)
+        app.setApplicationName("OLED Saver")
+        app.setQuitOnLastWindowClosed(False)
+
+        blanker = OledBlanker(app, platform)
+        log.info("App initialized, entering main loop")
+
+        import atexit
+        atexit.register(blanker.cleanup)
+
+        sys.exit(app.exec())
+    except Exception:
+        log.critical(f"Fatal error:\n{traceback.format_exc()}")
         sys.exit(1)
-
-    app = QApplication(sys.argv)
-    app.setApplicationName("OLED Saver")
-    app.setQuitOnLastWindowClosed(False)
-
-    blanker = OledBlanker(app, platform)
-
-    import atexit
-    atexit.register(blanker.cleanup)
-
-    sys.exit(app.exec())
