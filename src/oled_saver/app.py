@@ -1,210 +1,21 @@
-#!/usr/bin/python3
-"""
-OLED Saver — Cross-Platform
+"""Main application controller for OLED Saver."""
 
-Displays a fullscreen black window (or dims) on selected monitor(s) after
-a configurable idle timeout. Designed to prevent burn-in on OLED displays.
-
-Supports KDE Plasma, GNOME, and Windows.
-
-Features:
-- Auto-detects OLED monitors from EDID data
-- Platform-native idle detection (swayidle, Mutter, GetLastInputInfo)
-- Skips blanking when media is playing (MPRIS on Linux)
-- Night mode: automatic brightness reduction during configured hours
-- System tray icon with full control
-
-Dependencies:
-- Python 3 + PyQt6
-- Linux: swayidle (recommended: sudo apt install swayidle)
-"""
-
-import configparser
-import os
 import sys
-from datetime import datetime, time as dtime
-from pathlib import Path
+from datetime import datetime
 
-from PyQt6.QtCore import QTime, QTimer, Qt, pyqtSignal, QObject
+from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QObject
 from PyQt6.QtGui import QColor, QCursor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
-    QDialog,
-    QDialogButtonBox,
-    QFormLayout,
     QInputDialog,
-    QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMenu,
-    QPushButton,
-    QSpinBox,
     QSystemTrayIcon,
-    QTimeEdit,
-    QVBoxLayout,
     QWidget,
 )
 
-# Add script directory to path for platform imports
-sys.path.insert(0, str(Path(__file__).parent))
-from platform_base import detect_platform, is_oled_model
-
-CONFIG_DIR = Path.home() / ".config"
-CONFIG_FILE = CONFIG_DIR / "oled-saver.conf"
-
-
-class Config:
-    """Configuration manager."""
-
-    def __init__(self):
-        self.timeout_seconds = 120
-        self.monitor = "auto"
-        self.check_inhibitors = True
-        self.pause_duration_minutes = 30
-        self.idle_action = "blank"  # "blank" or "dim"
-        self.dim_brightness = 10
-        self.night_mode_enabled = True
-        self.night_mode_start = "22:00"
-        self.night_mode_end = "07:00"
-        self.night_mode_brightness = 20
-        self.load()
-
-    def load(self):
-        if not CONFIG_FILE.exists():
-            return
-        cp = configparser.ConfigParser()
-        cp.read(CONFIG_FILE)
-        s = cp["oled-saver"] if "oled-saver" in cp else {}
-        self.timeout_seconds = int(s.get("timeout_seconds", self.timeout_seconds))
-        self.monitor = s.get("monitor", self.monitor)
-        self.check_inhibitors = s.get("check_inhibitors", "true").lower() == "true"
-        self.pause_duration_minutes = int(
-            s.get("pause_duration_minutes", self.pause_duration_minutes)
-        )
-        self.night_mode_enabled = s.get("night_mode_enabled", "true").lower() == "true"
-        self.night_mode_start = s.get("night_mode_start", self.night_mode_start)
-        self.night_mode_end = s.get("night_mode_end", self.night_mode_end)
-        self.night_mode_brightness = int(
-            s.get("night_mode_brightness", self.night_mode_brightness)
-        )
-        self.idle_action = s.get("idle_action", self.idle_action)
-        self.dim_brightness = int(s.get("dim_brightness", self.dim_brightness))
-
-    def save(self):
-        cp = configparser.ConfigParser()
-        cp["oled-saver"] = {
-            "timeout_seconds": str(self.timeout_seconds),
-            "monitor": self.monitor,
-            "check_inhibitors": str(self.check_inhibitors).lower(),
-            "pause_duration_minutes": str(self.pause_duration_minutes),
-            "night_mode_enabled": str(self.night_mode_enabled).lower(),
-            "night_mode_start": self.night_mode_start,
-            "night_mode_end": self.night_mode_end,
-            "night_mode_brightness": str(self.night_mode_brightness),
-            "idle_action": self.idle_action,
-            "dim_brightness": str(self.dim_brightness),
-        }
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        with open(CONFIG_FILE, "w") as f:
-            cp.write(f)
-
-    @property
-    def monitor_list(self):
-        """Parse monitor field into list of connector names."""
-        if self.monitor in ("auto", "all"):
-            return [self.monitor]
-        return [m.strip() for m in self.monitor.split(",") if m.strip()]
-
-    @property
-    def night_start_time(self):
-        h, m = self.night_mode_start.split(":")
-        return dtime(int(h), int(m))
-
-    @property
-    def night_end_time(self):
-        h, m = self.night_mode_end.split(":")
-        return dtime(int(h), int(m))
-
-
-class MonitorSelectDialog(QDialog):
-    """Dialog to select which monitor(s) to target for idle actions."""
-
-    def __init__(self, monitors, preselected=None, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("OLED Saver — Select Monitors")
-        self.selected_connectors = []
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Select monitors for blank/dim:"))
-
-        self.list_widget = QListWidget()
-        for connector, model in monitors:
-            item = QListWidgetItem(f"{connector}  —  {model}")
-            item.setData(Qt.ItemDataRole.UserRole, connector)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            if preselected and connector in preselected:
-                item.setCheckState(Qt.CheckState.Checked)
-            else:
-                item.setCheckState(Qt.CheckState.Unchecked)
-            self.list_widget.addItem(item)
-        layout.addWidget(self.list_widget)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def _on_accept(self):
-        self.selected_connectors = []
-        for i in range(self.list_widget.count()):
-            item = self.list_widget.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                self.selected_connectors.append(item.data(Qt.ItemDataRole.UserRole))
-        if self.selected_connectors:
-            self.accept()
-
-
-class NightSettingsDialog(QDialog):
-    """Dialog to configure night mode settings."""
-
-    def __init__(self, config, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Night Mode Settings")
-        self.config = config
-
-        layout = QFormLayout(self)
-
-        self.start_edit = QTimeEdit()
-        self.start_edit.setDisplayFormat("HH:mm")
-        self.start_edit.setTime(QTime.fromString(config.night_mode_start, "HH:mm"))
-        layout.addRow("Start time:", self.start_edit)
-
-        self.end_edit = QTimeEdit()
-        self.end_edit.setDisplayFormat("HH:mm")
-        self.end_edit.setTime(QTime.fromString(config.night_mode_end, "HH:mm"))
-        layout.addRow("End time:", self.end_edit)
-
-        self.brightness_spin = QSpinBox()
-        self.brightness_spin.setRange(5, 100)
-        self.brightness_spin.setSuffix("%")
-        self.brightness_spin.setValue(config.night_mode_brightness)
-        layout.addRow("Brightness:", self.brightness_spin)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addRow(buttons)
-
-    def get_values(self):
-        return (
-            self.start_edit.time().toString("HH:mm"),
-            self.end_edit.time().toString("HH:mm"),
-            self.brightness_spin.value(),
-        )
+from oled_saver.config import Config
+from oled_saver.dialogs import MonitorSelectDialog, NightSettingsDialog
+from oled_saver.platform import detect_platform
 
 
 class BlackScreen(QWidget):
@@ -246,7 +57,6 @@ class BlackScreen(QWidget):
         self._dismiss()
 
     def mouseMoveEvent(self, event):
-        # Ignore the initial mouse move that happens when the window appears
         if self._ignore_first_move:
             self._ignore_first_move = False
             return
@@ -324,7 +134,6 @@ class OledBlanker:
                 target_connectors = [name for name, _ in oled_monitors]
                 print(f"Auto-detected OLED(s): {oled_monitors}")
             elif all_monitors:
-                # Show selection dialog (auto-detect failed)
                 dialog = MonitorSelectDialog(all_monitors)
                 if dialog.exec() and dialog.selected_connectors:
                     target_connectors = dialog.selected_connectors
@@ -344,7 +153,6 @@ class OledBlanker:
             if conn in screen_map:
                 result.append(screen_map[conn])
             else:
-                # Try partial match
                 for sname, sobj in screen_map.items():
                     if conn in sname or sname in conn:
                         result.append(sobj)
@@ -369,19 +177,16 @@ class OledBlanker:
         self.pause_action.triggered.connect(self._toggle_pause)
         menu.addSeparator()
 
-        # Manual triggers
         menu.addAction("🔲 Blank Now").triggered.connect(self._manual_blank)
         menu.addAction("🔅 Dim Now").triggered.connect(self._manual_dim)
         menu.addSeparator()
 
-        # Custom timeout
         timeout_action = menu.addAction(
             f"⏱ Set Timeout ({self.config.timeout_seconds}s)..."
         )
         timeout_action.triggered.connect(self._show_timeout_dialog)
         self.timeout_action = timeout_action
 
-        # Idle action submenu
         idle_menu = menu.addMenu("⚙ Idle Action")
         self.idle_blank_action = idle_menu.addAction("Blank screen")
         self.idle_blank_action.setCheckable(True)
@@ -397,7 +202,6 @@ class OledBlanker:
 
         menu.addSeparator()
 
-        # Night mode
         self.night_toggle_action = menu.addAction("")
         self._update_night_toggle_label()
         self.night_toggle_action.triggered.connect(self._toggle_night_mode)
@@ -407,7 +211,6 @@ class OledBlanker:
 
         menu.addSeparator()
 
-        # Monitor selection
         self.monitor_action = menu.addAction("")
         self._update_monitor_label()
         self.monitor_action.triggered.connect(self._show_monitor_dialog)
@@ -428,10 +231,8 @@ class OledBlanker:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setBrush(QColor(color))
         painter.setPen(Qt.PenStyle.NoPen)
-        # Draw circle with dark border
         painter.setBrush(QColor(color))
         painter.drawEllipse(4, 4, size - 8, size - 8)
-        # Inner highlight
         painter.setBrush(QColor(255, 255, 255, 60))
         painter.drawEllipse(12, 8, size // 3, size // 3)
         painter.end()
@@ -513,11 +314,10 @@ class OledBlanker:
 
     def _start_dismiss_watcher(self):
         """Start watching for mouse movement to dismiss dim."""
-        from PyQt6.QtGui import QCursor
         self._dim_mouse_pos = QCursor.pos()
         if not hasattr(self, '_dismiss_timer') or self._dismiss_timer is None:
             self._dismiss_timer = QTimer()
-            self._dismiss_timer.setInterval(500)  # Check every 500ms
+            self._dismiss_timer.setInterval(500)
             self._dismiss_timer.timeout.connect(self._check_dismiss)
         self._dismiss_timer.start()
 
@@ -528,7 +328,6 @@ class OledBlanker:
 
     def _check_dismiss(self):
         """Check if mouse moved to dismiss dim."""
-        from PyQt6.QtGui import QCursor
         if not self.dimmed:
             self._stop_dismiss_watcher()
             return
@@ -543,7 +342,6 @@ class OledBlanker:
         if self.paused:
             self._undo_idle_action()
             self.pause_action.setText("▶ Resume")
-            # Auto-resume after pause duration
             if self.pause_timer:
                 self.pause_timer.stop()
             self.pause_timer = QTimer()
@@ -660,7 +458,6 @@ class OledBlanker:
             self._undo_idle_action()
             self.config.monitor = ",".join(dialog.selected_connectors)
             self.config.save()
-            # Rebuild target screens and black screens
             self.target_screens = self._find_target_screens()
             self.black_screens = []
             for screen in self.target_screens:
@@ -681,10 +478,9 @@ class OledBlanker:
     def _setup_night_mode(self):
         """Setup timer that checks time and applies night brightness."""
         self.night_timer = QTimer()
-        self.night_timer.setInterval(60_000)  # Check every minute
+        self.night_timer.setInterval(60_000)
         self.night_timer.timeout.connect(self._check_night_mode)
         self.night_timer.start()
-        # Run initial check
         self._check_night_mode()
 
     def _is_night_time(self):
@@ -693,10 +489,8 @@ class OledBlanker:
         start = self.config.night_start_time
         end = self.config.night_end_time
         if start <= end:
-            # e.g., 08:00 – 20:00 (same day)
             return start <= now < end
         else:
-            # e.g., 22:00 – 07:00 (crosses midnight)
             return now >= start or now < end
 
     def _check_night_mode(self):
@@ -763,7 +557,6 @@ class OledBlanker:
             self.config.night_mode_brightness = brightness
             self.config.save()
             self._update_night_toggle_label()
-            # Re-check immediately with new settings
             if self.night_active:
                 self._restore_brightness()
             self._check_night_mode()
@@ -793,11 +586,9 @@ class OledBlanker:
 
 
 def main():
-    # Detect platform
     platform = detect_platform()
     print(f"Platform: {type(platform).__name__}")
 
-    # Check for existing instance
     is_running, old_pid = platform.check_single_instance()
     if is_running:
         print(f"Already running (PID {old_pid}). Sending toggle.", file=sys.stderr)
@@ -811,12 +602,7 @@ def main():
 
     blanker = OledBlanker(app, platform)
 
-    # Cleanup on exit
     import atexit
     atexit.register(blanker.cleanup)
 
     sys.exit(app.exec())
-
-
-if __name__ == "__main__":
-    main()

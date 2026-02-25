@@ -26,13 +26,13 @@ jobs:
           pip install PyQt6 pyinstaller
 
       - name: Build binary
-        run: python build.py
+        run: python packaging/build.py
 
       - name: Prepare release archive
         run: |
           mkdir -p release/oled-saver-linux
           cp dist/oled-saver release/oled-saver-linux/
-          cp install.sh uninstall.sh toggle-pause.sh LICENSE README.md release/oled-saver-linux/
+          cp scripts/install.sh scripts/uninstall.sh scripts/toggle-pause.sh LICENSE README.md release/oled-saver-linux/
           chmod +x release/oled-saver-linux/install.sh release/oled-saver-linux/uninstall.sh release/oled-saver-linux/toggle-pause.sh
           cd release && zip -r ../oled-saver-linux.zip oled-saver-linux/
 
@@ -56,7 +56,7 @@ jobs:
         run: pip install PyQt6 pyinstaller
 
       - name: Build exe
-        run: python build.py
+        run: python packaging/build.py
 
       - name: Prepare standalone zip
         shell: bash
@@ -68,7 +68,7 @@ jobs:
 
       - name: Build NSIS installer
         shell: cmd
-        run: makensis installer.nsi
+        run: makensis packaging\installer.nsi
 
       - name: Upload standalone zip
         uses: actions/upload-artifact@v4

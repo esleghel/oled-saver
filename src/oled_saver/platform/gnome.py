@@ -6,7 +6,7 @@ import subprocess
 
 from PyQt6.QtCore import QProcess, QTimer
 
-from platform_base import LinuxPlatform
+from oled_saver.platform.base import LinuxPlatform
 
 
 class GNOMEPlatform(LinuxPlatform):

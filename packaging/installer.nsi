@@ -16,7 +16,7 @@ RequestExecutionLevel admin
 
 ; Pages
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "LICENSE"
+!insertmacro MUI_PAGE_LICENSE "..\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -30,9 +30,9 @@ Section "Install"
     SetOutPath "$INSTDIR"
 
     ; Copy files
-    File "dist\oled-saver.exe"
-    File "LICENSE"
-    File "README.md"
+    File "..\dist\oled-saver.exe"
+    File "..\LICENSE"
+    File "..\README.md"
 
     ; Create uninstaller
     WriteUninstaller "$INSTDIR\uninstall.exe"

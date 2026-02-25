@@ -51,7 +51,13 @@ Requires Python 3.10+ and PyQt6.
 
 ```bash
 pip install PyQt6
-python oled_saver.py
+python -m oled_saver
+```
+
+Or install as a package:
+```bash
+pip install .
+oled-saver
 ```
 
 On Linux, install `swayidle` for best idle detection:

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QTimer
 
-from platform_base import Platform, parse_edid_monitor_name, is_oled_model
+from oled_saver.platform.base import Platform, parse_edid_monitor_name, is_oled_model
 
 
 class WindowsPlatform(Platform):

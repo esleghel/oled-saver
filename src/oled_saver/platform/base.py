@@ -1,5 +1,5 @@
 """
-Platform abstraction layer for OLED Blanker.
+Platform abstraction layer for OLED Saver.
 
 Provides a Platform ABC and a LinuxPlatform base class with shared Linux
 functionality (EDID, MPRIS, signals, PID file, QCursor fallback).

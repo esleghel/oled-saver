@@ -17,8 +17,11 @@ Homepage = "https://github.com/esleghel/oled-saver"
 Issues = "https://github.com/esleghel/oled-saver/issues"
 
 [project.scripts]
-oled-saver = "oled_saver:main"
+oled-saver = "oled_saver.app:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
