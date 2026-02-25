@@ -644,3 +644,7 @@ def main():
     except Exception:
         log.critical(f"Fatal error:\n{traceback.format_exc()}")
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
