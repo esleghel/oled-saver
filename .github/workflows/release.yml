@@ -83,7 +83,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: oled-saver-windows-installer.exe
+          path: packaging/oled-saver-windows-installer.exe
 
   release:
     needs: [build-linux, build-windows]
