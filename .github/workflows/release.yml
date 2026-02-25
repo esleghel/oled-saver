@@ -53,7 +53,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install PyQt6 pyinstaller
+        run: pip install PyQt6 winsdk pyinstaller
 
       - name: Build exe
         run: python packaging/build.py

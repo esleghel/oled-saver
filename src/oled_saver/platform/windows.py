@@ -1,5 +1,6 @@
-"""Windows platform backend for OLED Blanker."""
+"""Windows platform backend for OLED Saver."""
 
+import asyncio
 import ctypes
 import ctypes.wintypes
 import os
@@ -13,6 +14,54 @@ from pathlib import Path
 from PyQt6.QtCore import QTimer
 
 from oled_saver.platform.base import Platform, parse_edid_monitor_name, is_oled_model
+
+# SHQueryUserNotificationState return values
+QUNS_NOT_PRESENT = 1
+QUNS_BUSY = 2
+QUNS_RUNNING_D3D_FULL_SCREEN = 3
+QUNS_PRESENTATION_MODE = 4
+QUNS_ACCEPTS_NOTIFICATIONS = 5
+QUNS_QUIET_TIME = 6
+QUNS_APP = 7
+
+# Media playback status (Windows.Media.Control)
+_MEDIA_PLAYING = 4  # GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing
+
+def _is_fullscreen_app_running():
+    """Check if a fullscreen/D3D/presentation app is running via shell32."""
+    try:
+        state = ctypes.c_int(0)
+        ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(state))
+        return state.value in (QUNS_BUSY, QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_PRESENTATION_MODE)
+    except Exception:
+        return False
+
+
+def _is_media_session_playing():
+    """Check if any Windows media session is currently playing (browsers, Spotify, VLC, etc.)."""
+    try:
+        from winsdk.windows.media.control import (
+            GlobalSystemMediaTransportControlsSessionManager as SessionManager,
+        )
+
+        async def _check():
+            manager = await SessionManager.request_async()
+            sessions = manager.get_sessions()
+            for session in sessions:
+                info = session.get_playback_info()
+                if info and info.playback_status == _MEDIA_PLAYING:
+                    return True
+            return False
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_check())
+        finally:
+            loop.close()
+    except ImportError:
+        return False
+    except Exception:
+        return False
 
 
 class WindowsPlatform(Platform):
@@ -35,29 +84,15 @@ class WindowsPlatform(Platform):
     # --- Monitor Detection ---
 
     def detect_monitors(self):
-        """Detect monitors using Qt screens + WMI EDID when available."""
+        """Detect monitors using EnumDisplayMonitors + EnumDisplayDevices (ctypes)."""
         oled_monitors, all_monitors = [], []
         try:
-            # Try WMI via PowerShell for EDID
-            result = subprocess.run(
-                ["powershell", "-Command",
-                 "Get-CimInstance -Namespace root\\wmi -ClassName WmiMonitorID | "
-                 "ForEach-Object { $name = ($_.UserFriendlyName | ForEach-Object { [char]$_ }) -join ''; "
-                 "$id = ($_.InstanceName -split '\\\\')[1]; Write-Output \"$id|$name\" }"],
-                capture_output=True, text=True, timeout=10,
-            )
-            for line in result.stdout.strip().splitlines():
-                if "|" in line:
-                    connector, model = line.split("|", 1)
-                    model = model.strip().rstrip("\x00")
-                    connector = connector.strip()
-                    if not model:
-                        model = "Unknown"
-                    all_monitors.append((connector, model))
-                    if is_oled_model(model):
-                        oled_monitors.append((connector, model))
+            all_monitors = self._enum_display_monitors()
+            for connector, model in all_monitors:
+                if is_oled_model(model):
+                    oled_monitors.append((connector, model))
         except Exception:
-            # Fallback: use display index names
+            # Fallback: Qt screens
             try:
                 from PyQt6.QtWidgets import QApplication
                 app = QApplication.instance()
@@ -67,8 +102,43 @@ class WindowsPlatform(Platform):
                         all_monitors.append((name, name))
             except Exception:
                 pass
-
         return oled_monitors, all_monitors
+
+    def _enum_display_monitors(self):
+        """Enumerate monitors via Win32 EnumDisplayMonitors + EnumDisplayDevices."""
+        user32 = ctypes.windll.user32
+
+        class DISPLAY_DEVICE(ctypes.Structure):
+            _fields_ = [
+                ('cb', ctypes.wintypes.DWORD),
+                ('DeviceName', ctypes.c_wchar * 32),
+                ('DeviceString', ctypes.c_wchar * 128),
+                ('StateFlags', ctypes.wintypes.DWORD),
+                ('DeviceID', ctypes.c_wchar * 128),
+                ('DeviceKey', ctypes.c_wchar * 128),
+            ]
+
+        DISPLAY_DEVICE_ACTIVE = 0x00000001
+        monitors = []
+        idx = 0
+        while True:
+            adapter = DISPLAY_DEVICE()
+            adapter.cb = ctypes.sizeof(adapter)
+            if not user32.EnumDisplayDevicesW(None, idx, ctypes.byref(adapter), 0):
+                break
+            idx += 1
+            if not (adapter.StateFlags & DISPLAY_DEVICE_ACTIVE):
+                continue
+            # Get the monitor attached to this adapter
+            monitor = DISPLAY_DEVICE()
+            monitor.cb = ctypes.sizeof(monitor)
+            if user32.EnumDisplayDevicesW(adapter.DeviceName, 0, ctypes.byref(monitor), 0):
+                model = monitor.DeviceString.strip() or "Unknown"
+            else:
+                model = adapter.DeviceString.strip() or "Unknown"
+            connector = adapter.DeviceName.strip()
+            monitors.append((connector, model))
+        return monitors
 
     def get_all_outputs(self):
         try:
@@ -174,8 +244,8 @@ class WindowsPlatform(Platform):
     # --- Media Playing ---
 
     def is_media_playing(self):
-        """On Windows, skip media check (return False)."""
-        return False
+        """Check if media is playing or a fullscreen app is running."""
+        return _is_fullscreen_app_running() or _is_media_session_playing()
 
     # --- Single Instance (Named Mutex) ---
 

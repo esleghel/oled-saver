@@ -19,8 +19,14 @@ def build():
         "--hidden-import", "oled_saver.platform.kde",
         "--hidden-import", "oled_saver.platform.gnome",
         "--hidden-import", "oled_saver.platform.windows",
-        str(src / "oled_saver" / "app.py"),
     ]
+    # Include winsdk for Windows media detection
+    if sys.platform == "win32":
+        cmd += [
+            "--hidden-import", "winsdk",
+            "--hidden-import", "winsdk.windows.media.control",
+        ]
+    cmd.append(str(src / "oled_saver" / "app.py"))
     print(f"Running: {' '.join(cmd)}")
     subprocess.run(cmd, check=True, cwd=ROOT)
 
