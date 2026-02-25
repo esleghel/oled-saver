@@ -1,0 +1,24 @@
+[project]
+name = "oled-saver"
+version = "1.0.0"
+description = "Prevent OLED burn-in by blanking or dimming idle monitors"
+readme = "README.md"
+license = "GPL-3.0-only"
+requires-python = ">=3.10"
+authors = [
+    { name = "esleghel" },
+]
+dependencies = [
+    "PyQt6>=6.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/esleghel/oled-saver"
+Issues = "https://github.com/esleghel/oled-saver/issues"
+
+[project.scripts]
+oled-saver = "oled_saver:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

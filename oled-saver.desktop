@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=OLED Saver
+Comment=Blank or dim OLED monitors when idle to prevent burn-in
+Exec=oled-saver
+Icon=preferences-desktop-screensaver
+Terminal=false
+Categories=Utility;
+X-KDE-autostart-after=panel
