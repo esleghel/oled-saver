@@ -66,6 +66,9 @@ jobs:
           cp LICENSE README.md release/oled-saver-windows/
           cd release && 7z a ../oled-saver-windows.zip oled-saver-windows/
 
+      - name: Install NSIS
+        run: choco install nsis -y
+
       - name: Build NSIS installer
         shell: cmd
         run: makensis packaging\installer.nsi
