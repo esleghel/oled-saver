@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1
+          pip install PyQt6 pyinstaller
+
+      - name: Build binary
+        run: python build.py
+
+      - name: Prepare release archive
+        run: |
+          mkdir -p release/oled-saver-linux
+          cp dist/oled-saver release/oled-saver-linux/
+          cp install.sh uninstall.sh toggle-pause.sh LICENSE README.md release/oled-saver-linux/
+          chmod +x release/oled-saver-linux/install.sh release/oled-saver-linux/uninstall.sh release/oled-saver-linux/toggle-pause.sh
+          cd release && zip -r ../oled-saver-linux.zip oled-saver-linux/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: oled-saver-linux.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install PyQt6 pyinstaller
+
+      - name: Build exe
+        run: python build.py
+
+      - name: Prepare standalone zip
+        shell: bash
+        run: |
+          mkdir -p release/oled-saver-windows
+          cp dist/oled-saver.exe release/oled-saver-windows/
+          cp LICENSE README.md release/oled-saver-windows/
+          cd release && 7z a ../oled-saver-windows.zip oled-saver-windows/
+
+      - name: Build NSIS installer
+        shell: cmd
+        run: makensis installer.nsi
+
+      - name: Upload standalone zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-standalone
+          path: oled-saver-windows.zip
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: oled-saver-windows-installer.exe
+
+  release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/linux-release/oled-saver-linux.zip
+            artifacts/windows-standalone/oled-saver-windows.zip
+            artifacts/windows-installer/oled-saver-windows-installer.exe
