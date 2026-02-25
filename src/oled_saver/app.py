@@ -4,22 +4,49 @@ import logging
 import os
 import sys
 import traceback
-from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QObject
-from PyQt6.QtGui import QColor, QCursor, QIcon, QPainter, QPixmap
-from PyQt6.QtWidgets import (
-    QApplication,
-    QInputDialog,
-    QMenu,
-    QSystemTrayIcon,
-    QWidget,
-)
+# Setup logging BEFORE any other imports so we catch import errors
+def _setup_logging():
+    """Setup file logging (especially useful on Windows where there's no console)."""
+    if sys.platform == "win32":
+        log_dir = Path(os.environ.get("APPDATA", Path.home())) / "OLED Saver"
+    else:
+        log_dir = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "oled-saver"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "oled-saver.log"
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(log_file, encoding="utf-8"),
+            logging.StreamHandler(sys.stderr),
+        ],
+    )
+    logging.info(f"OLED Saver starting — log: {log_file}")
+    return log_file
 
-from oled_saver.config import Config
-from oled_saver.dialogs import MonitorSelectDialog, NightSettingsDialog
-from oled_saver.platform import detect_platform
+_log_file = _setup_logging()
+
+try:
+    from datetime import datetime
+
+    from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QObject
+    from PyQt6.QtGui import QColor, QCursor, QIcon, QPainter, QPixmap
+    from PyQt6.QtWidgets import (
+        QApplication,
+        QInputDialog,
+        QMenu,
+        QSystemTrayIcon,
+        QWidget,
+    )
+
+    from oled_saver.config import Config
+    from oled_saver.dialogs import MonitorSelectDialog, NightSettingsDialog
+    from oled_saver.platform import detect_platform
+except Exception:
+    logging.critical(f"Import error:\n{traceback.format_exc()}")
+    sys.exit(1)
 
 
 class BlackScreen(QWidget):
@@ -589,29 +616,7 @@ class OledBlanker:
         self.platform.cleanup()
 
 
-def _setup_logging():
-    """Setup file logging (especially useful on Windows where there's no console)."""
-    if sys.platform == "win32":
-        log_dir = Path(os.environ.get("APPDATA", Path.home())) / "OLED Saver"
-    else:
-        log_dir = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "oled-saver"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "oled-saver.log"
-
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, encoding="utf-8"),
-            logging.StreamHandler(sys.stderr),
-        ],
-    )
-    logging.info(f"OLED Saver starting — log: {log_file}")
-    return log_file
-
-
 def main():
-    log_file = _setup_logging()
     log = logging.getLogger(__name__)
 
     try:
