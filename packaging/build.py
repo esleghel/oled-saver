@@ -15,13 +15,17 @@ def build():
         "--windowed",
         "--name", "oled-saver",
         "--paths", str(src),
+        "--add-data", f"{ROOT / 'assets' / 'icon-64.png'}{':' if sys.platform != 'win32' else ';'}assets",
         "--hidden-import", "oled_saver.platform.base",
         "--hidden-import", "oled_saver.platform.kde",
         "--hidden-import", "oled_saver.platform.gnome",
         "--hidden-import", "oled_saver.platform.windows",
     ]
-    # Include winsdk for Windows media detection
+    # Windows: use .ico for exe icon + include winsdk
     if sys.platform == "win32":
+        ico = ROOT / "assets" / "oled-saver.ico"
+        if ico.exists():
+            cmd += ["--icon", str(ico)]
         cmd += [
             "--hidden-import", "winsdk",
             "--hidden-import", "winsdk.windows.media.control",

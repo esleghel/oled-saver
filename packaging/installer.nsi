@@ -10,8 +10,8 @@ InstallDirRegKey HKLM "Software\OLEDSaver" "InstallDir"
 RequestExecutionLevel admin
 
 ; UI
-!define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
-!define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
+!define MUI_ICON "..\assets\oled-saver.ico"
+!define MUI_UNICON "..\assets\oled-saver.ico"
 !define MUI_ABORTWARNING
 
 ; Pages

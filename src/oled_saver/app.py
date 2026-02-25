@@ -253,19 +253,50 @@ class OledBlanker:
         self.tray.setToolTip("OLED Saver — Active")
         self.tray.show()
 
+    def _get_icon_path(self):
+        """Find the app icon file."""
+        import os
+        # Check relative to this file (source), then relative to exe (PyInstaller)
+        candidates = [
+            Path(__file__).parent.parent.parent / "assets" / "icon-64.png",
+            Path(getattr(sys, '_MEIPASS', '')) / "assets" / "icon-64.png",
+        ]
+        for p in candidates:
+            if p.exists():
+                return str(p)
+        return None
+
     def _make_icon(self, color):
-        """Generate a simple colored circle icon."""
+        """Load app icon with a colored status dot overlay."""
         size = 64
-        pixmap = QPixmap(size, size)
-        pixmap.fill(QColor(0, 0, 0, 0))
+        dot_size = 20
+
+        # Try loading the real icon
+        icon_path = self._get_icon_path()
+        if icon_path:
+            pixmap = QPixmap(icon_path).scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        else:
+            # Fallback: plain colored circle
+            pixmap = QPixmap(size, size)
+            pixmap.fill(QColor(0, 0, 0, 0))
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setBrush(QColor(color))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(4, 4, size - 8, size - 8)
+            painter.end()
+            return QIcon(pixmap)
+
+        # Draw status dot (bottom-right corner)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(QColor(color))
         painter.setPen(Qt.PenStyle.NoPen)
+        # White border around dot
+        painter.setBrush(QColor(255, 255, 255, 200))
+        painter.drawEllipse(size - dot_size - 2, size - dot_size - 2, dot_size + 4, dot_size + 4)
+        # Colored dot
         painter.setBrush(QColor(color))
-        painter.drawEllipse(4, 4, size - 8, size - 8)
-        painter.setBrush(QColor(255, 255, 255, 60))
-        painter.drawEllipse(12, 8, size // 3, size // 3)
+        painter.drawEllipse(size - dot_size, size - dot_size, dot_size, dot_size)
         painter.end()
         return QIcon(pixmap)
 

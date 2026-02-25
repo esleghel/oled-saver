@@ -1,5 +1,9 @@
 # 🛡️ OLED Saver
 
+<p align="center">
+  <img src="assets/oled-saver.png" alt="OLED Saver" width="128">
+</p>
+
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![GitHub Release](https://img.shields.io/github/v/release/esleghel/oled-saver)](https://github.com/esleghel/oled-saver/releases)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey)
