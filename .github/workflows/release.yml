@@ -71,7 +71,7 @@ jobs:
 
       - name: Build NSIS installer
         shell: cmd
-        run: makensis packaging\installer.nsi
+        run: '"%programfiles(x86)%\NSIS\makensis.exe" packaging\installer.nsi'
 
       - name: Upload standalone zip
         uses: actions/upload-artifact@v4
