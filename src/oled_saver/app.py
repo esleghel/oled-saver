@@ -97,6 +97,33 @@ class BlackScreen(QWidget):
         self._dismiss()
 
 
+class DimOverlay(QWidget):
+    """Semi-transparent fullscreen overlay for dimming. Input passes through."""
+
+    def __init__(self, target_screen):
+        super().__init__()
+        self._target_screen = target_screen
+        self.setWindowTitle("OLED Saver Dim")
+        self.setStyleSheet("background-color: black;")
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowTransparentForInput
+        )
+
+    def show_on_monitor(self, brightness_pct):
+        """Show dimming overlay. brightness_pct=10 means 90% opacity."""
+        opacity = (100 - max(1, min(100, brightness_pct))) / 100.0
+        self.setWindowOpacity(opacity)
+        geo = self._target_screen.geometry()
+        self.setGeometry(geo)
+        self.windowHandle()
+        if self.windowHandle():
+            self.windowHandle().setScreen(self._target_screen)
+        self.showFullScreen()
+
+
 class SignalBridge(QObject):
     """Bridge Unix signals to Qt signals."""
     toggle_pause = pyqtSignal()
@@ -113,9 +140,11 @@ class OledBlanker:
         self.blanked = False
         self.dimmed = False
         self.black_screens = []
+        self.dim_overlays = []
         self.target_screens = []
         self.pause_timer = None
         self.night_active = False
+        self._manual_override = False
 
         # Signal bridge for external toggle
         self.signal_bridge = SignalBridge()
@@ -131,8 +160,11 @@ class OledBlanker:
         self.black_screens = []
         for screen in self.target_screens:
             bs = BlackScreen(screen)
-            bs.dismissed = self._undo_idle_action
+            bs.dismissed = self._dismiss_action
             self.black_screens.append(bs)
+
+        # Create dim overlay widgets (one per target)
+        self.dim_overlays = [DimOverlay(s) for s in self.target_screens]
 
         # Setup system tray
         self._setup_tray()
@@ -141,7 +173,7 @@ class OledBlanker:
         self.platform.setup_idle(
             self.config.timeout_seconds,
             self._try_idle_action,
-            self._undo_idle_action,
+            self._on_idle_resume,
         )
 
         # Setup night mode
@@ -325,8 +357,15 @@ class OledBlanker:
         else:
             self._do_blank()
 
-    def _undo_idle_action(self):
-        """Undo whatever idle action is currently active."""
+    def _on_idle_resume(self):
+        """Called by idle system on resume — respects manual override."""
+        if self._manual_override:
+            return
+        self._dismiss_action()
+
+    def _dismiss_action(self):
+        """Dismiss any active blank/dim from any source."""
+        self._manual_override = False
         if self.blanked:
             self._undo_blank()
         if self.dimmed:
@@ -352,27 +391,26 @@ class OledBlanker:
         print("Screen unblanked")
 
     def _do_dim(self):
-        """Dim target monitors to configured brightness."""
+        """Dim target monitors via semi-transparent overlay."""
         if self.dimmed:
             return
         self.dimmed = True
         self._dim_mouse_pos = None
-        for screen in self.target_screens:
-            self.platform.set_brightness(screen.name(), self.config.dim_brightness)
+        for overlay in self.dim_overlays:
+            overlay.show_on_monitor(self.config.dim_brightness)
         names = [s.name() for s in self.target_screens]
         print(f"Screen dimmed to {self.config.dim_brightness}% on {names}")
 
     def _undo_dim(self):
-        """Restore target monitors brightness from dim state."""
+        """Remove dim overlays."""
         if not self.dimmed:
             return
         self.dimmed = False
         self._stop_dismiss_watcher()
-        restore_pct = self.config.night_mode_brightness if self.night_active else 100
-        for screen in self.target_screens:
-            self.platform.set_brightness(screen.name(), restore_pct)
+        for overlay in self.dim_overlays:
+            overlay.hide()
         names = [s.name() for s in self.target_screens]
-        print(f"Screen undimmed to {restore_pct}% on {names}")
+        print(f"Screen undimmed on {names}")
 
     def _start_dismiss_watcher(self):
         """Start watching for mouse movement to dismiss dim."""
@@ -395,14 +433,14 @@ class OledBlanker:
             return
         pos = QCursor.pos()
         if self._dim_mouse_pos is not None and pos != self._dim_mouse_pos:
-            self._undo_dim()
+            self._dismiss_action()
         self._dim_mouse_pos = pos
 
     def _toggle_pause(self):
         """Toggle pause state."""
         self.paused = not self.paused
         if self.paused:
-            self._undo_idle_action()
+            self._dismiss_action()
             self.pause_action.setText("▶ Resume")
             if self.pause_timer:
                 self.pause_timer.stop()
@@ -458,15 +496,19 @@ class OledBlanker:
         self.timeout_action.setText(f"⏱ Set Timeout ({seconds}s)...")
 
     def _manual_blank(self):
-        """Manually trigger blank screen."""
-        self._undo_idle_action()
-        self._do_blank()
+        """Manually trigger blank screen (deferred to let menu close)."""
+        self._dismiss_action()
+        self._manual_override = True
+        QTimer.singleShot(150, self._do_blank)
 
     def _manual_dim(self):
-        """Manually trigger dim."""
-        self._undo_idle_action()
-        self._do_dim()
-        self._start_dismiss_watcher()
+        """Manually trigger dim (deferred to let menu close)."""
+        self._dismiss_action()
+        self._manual_override = True
+        def _deferred():
+            self._do_dim()
+            self._start_dismiss_watcher()
+        QTimer.singleShot(150, _deferred)
 
     def _set_idle_action(self, action):
         """Set the idle action (blank or dim)."""
@@ -517,15 +559,16 @@ class OledBlanker:
         current_names = [s.name() for s in self.target_screens]
         dialog = MonitorSelectDialog(all_monitors, preselected=current_names)
         if dialog.exec() and dialog.selected_connectors:
-            self._undo_idle_action()
+            self._dismiss_action()
             self.config.monitor = ",".join(dialog.selected_connectors)
             self.config.save()
             self.target_screens = self._find_target_screens()
             self.black_screens = []
             for screen in self.target_screens:
                 bs = BlackScreen(screen)
-                bs.dismissed = self._undo_idle_action
+                bs.dismissed = self._dismiss_action
                 self.black_screens.append(bs)
+            self.dim_overlays = [DimOverlay(s) for s in self.target_screens]
             self._update_monitor_label()
             names = [s.name() for s in self.target_screens]
             self.tray.showMessage(
@@ -631,7 +674,7 @@ class OledBlanker:
 
     def _quit(self):
         """Clean shutdown."""
-        self._undo_idle_action()
+        self._dismiss_action()
         if self.night_active:
             self._restore_brightness()
         self.platform.cleanup()
@@ -640,8 +683,8 @@ class OledBlanker:
     def cleanup(self):
         """Cleanup on exit."""
         if self.dimmed:
-            for screen in self.target_screens:
-                self.platform.set_brightness(screen.name(), 100)
+            for overlay in self.dim_overlays:
+                overlay.hide()
         if self.night_active:
             self.platform.set_brightness_all(100)
         self.platform.cleanup()
