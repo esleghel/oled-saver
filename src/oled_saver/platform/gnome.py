@@ -94,6 +94,29 @@ class GNOMEPlatform(LinuxPlatform):
                   file=__import__("sys").stderr)
             return False
 
+    # --- Media Detection (GNOME session inhibitors + MPRIS) ---
+
+    def is_media_playing(self):
+        """Check GNOME idle inhibitors first, then fall back to MPRIS."""
+        if self._is_idle_inhibited():
+            return True
+        return super().is_media_playing()
+
+    def _is_idle_inhibited(self):
+        """Check if GNOME session has active idle inhibitors (flag 8)."""
+        try:
+            result = subprocess.run(
+                ["gdbus", "call", "--session",
+                 "--dest", "org.gnome.SessionManager",
+                 "--object-path", "/org/gnome/SessionManager",
+                 "--method", "org.gnome.SessionManager.IsInhibited",
+                 "8"],
+                capture_output=True, text=True, timeout=2,
+            )
+            return "true" in result.stdout.lower()
+        except Exception:
+            return False
+
     # --- Idle Detection (swayidle preferred, Mutter fallback, QCursor last resort) ---
 
     def setup_idle(self, timeout_s, on_idle, on_resume):

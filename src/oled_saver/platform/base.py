@@ -223,9 +223,11 @@ class LinuxPlatform(Platform):
                     capture_output=True, text=True, timeout=2,
                 )
                 if '"Playing"' in status_result.stdout:
+                    print(f"Media playing: {player}")
                     return True
             return False
-        except Exception:
+        except Exception as e:
+            print(f"MPRIS check failed: {e}", file=__import__("sys").stderr)
             return False
 
     # --- Idle Detection (QCursor polling fallback) ---

@@ -40,6 +40,30 @@ class KDEPlatform(LinuxPlatform):
                 pass
         return outputs
 
+    # --- Media Detection (KDE inhibitors + MPRIS) ---
+
+    def is_media_playing(self):
+        """Check KDE idle inhibitors first, then fall back to MPRIS."""
+        if self._is_idle_inhibited():
+            return True
+        return super().is_media_playing()
+
+    def _is_idle_inhibited(self):
+        """Check if KDE PowerDevil has active screen-change inhibitions."""
+        try:
+            result = subprocess.run(
+                ["gdbus", "call", "--session",
+                 "--dest", "org.kde.Solid.PowerManagement.PolicyAgent",
+                 "--object-path", "/org/kde/Solid/PowerManagement/PolicyAgent",
+                 "--method",
+                 "org.kde.Solid.PowerManagement.PolicyAgent.HasInhibition",
+                 "4"],
+                capture_output=True, text=True, timeout=2,
+            )
+            return "true" in result.stdout.lower()
+        except Exception:
+            return False
+
     # --- Idle Detection (swayidle + fallback) ---
 
     def setup_idle(self, timeout_s, on_idle, on_resume):
