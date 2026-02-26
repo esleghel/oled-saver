@@ -35,9 +35,21 @@ class GNOMEPlatform(LinuxPlatform):
 
     def set_brightness(self, output_name, brightness_pct):
         pct = max(1, min(100, int(brightness_pct)))
-        # Try gnome-randr first, then xrandr fallback
-        if not self._set_brightness_xrandr(output_name, pct):
-            pass  # Already logged
+        if self._use_gdbus:
+            try:
+                subprocess.run(
+                    ["gdbus", "call", "--session",
+                     "--dest", "org.gnome.SettingsDaemon.Power",
+                     "--object-path", "/org/gnome/SettingsDaemon/Power",
+                     "--method", "org.freedesktop.DBus.Properties.Set",
+                     "org.gnome.SettingsDaemon.Power.Screen",
+                     "Brightness", f"<int32 {pct}>"],
+                    capture_output=True, timeout=3,
+                )
+                return
+            except Exception as e:
+                print(f"gdbus brightness failed: {e}", file=__import__("sys").stderr)
+        self._set_brightness_xrandr(output_name, pct)
 
     def set_brightness_all(self, brightness_pct):
         pct = max(1, min(100, int(brightness_pct)))
@@ -68,12 +80,18 @@ class GNOMEPlatform(LinuxPlatform):
         """Set brightness via xrandr (software gamma)."""
         value = max(0.1, min(1.0, brightness_pct / 100.0))
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["xrandr", "--output", output_name, "--brightness", f"{value:.2f}"],
-                capture_output=True, timeout=3,
+                capture_output=True, text=True, timeout=3,
             )
+            if result.returncode != 0:
+                print(f"xrandr brightness failed for {output_name}: {result.stderr.strip()}",
+                      file=__import__("sys").stderr)
+                return False
             return True
-        except Exception:
+        except Exception as e:
+            print(f"xrandr brightness error for {output_name}: {e}",
+                  file=__import__("sys").stderr)
             return False
 
     # --- Idle Detection (swayidle preferred, Mutter fallback, QCursor last resort) ---

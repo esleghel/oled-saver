@@ -97,33 +97,6 @@ class BlackScreen(QWidget):
         self._dismiss()
 
 
-class DimOverlay(QWidget):
-    """Semi-transparent fullscreen overlay for dimming. Input passes through."""
-
-    def __init__(self, target_screen):
-        super().__init__()
-        self._target_screen = target_screen
-        self.setWindowTitle("OLED Saver Dim")
-        self.setStyleSheet("background-color: black;")
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
-            | Qt.WindowType.WindowTransparentForInput
-        )
-
-    def show_on_monitor(self, brightness_pct):
-        """Show dimming overlay. brightness_pct=10 means 90% opacity."""
-        opacity = (100 - max(1, min(100, brightness_pct))) / 100.0
-        self.setWindowOpacity(opacity)
-        geo = self._target_screen.geometry()
-        self.setGeometry(geo)
-        self.windowHandle()
-        if self.windowHandle():
-            self.windowHandle().setScreen(self._target_screen)
-        self.showFullScreen()
-
-
 class SignalBridge(QObject):
     """Bridge Unix signals to Qt signals."""
     toggle_pause = pyqtSignal()
@@ -140,7 +113,6 @@ class OledBlanker:
         self.blanked = False
         self.dimmed = False
         self.black_screens = []
-        self.dim_overlays = []
         self.target_screens = []
         self.pause_timer = None
         self.night_active = False
@@ -162,9 +134,6 @@ class OledBlanker:
             bs = BlackScreen(screen)
             bs.dismissed = self._dismiss_action
             self.black_screens.append(bs)
-
-        # Create dim overlay widgets (one per target)
-        self.dim_overlays = [DimOverlay(s) for s in self.target_screens]
 
         # Setup system tray
         self._setup_tray()
@@ -391,26 +360,27 @@ class OledBlanker:
         print("Screen unblanked")
 
     def _do_dim(self):
-        """Dim target monitors via semi-transparent overlay."""
+        """Dim target monitors to configured brightness."""
         if self.dimmed:
             return
         self.dimmed = True
         self._dim_mouse_pos = None
-        for overlay in self.dim_overlays:
-            overlay.show_on_monitor(self.config.dim_brightness)
+        for screen in self.target_screens:
+            self.platform.set_brightness(screen.name(), self.config.dim_brightness)
         names = [s.name() for s in self.target_screens]
         print(f"Screen dimmed to {self.config.dim_brightness}% on {names}")
 
     def _undo_dim(self):
-        """Remove dim overlays."""
+        """Restore target monitors brightness from dim state."""
         if not self.dimmed:
             return
         self.dimmed = False
         self._stop_dismiss_watcher()
-        for overlay in self.dim_overlays:
-            overlay.hide()
+        restore_pct = self.config.night_mode_brightness if self.night_active else 100
+        for screen in self.target_screens:
+            self.platform.set_brightness(screen.name(), restore_pct)
         names = [s.name() for s in self.target_screens]
-        print(f"Screen undimmed on {names}")
+        print(f"Screen undimmed to {restore_pct}% on {names}")
 
     def _start_dismiss_watcher(self):
         """Start watching for mouse movement to dismiss dim."""
@@ -568,7 +538,6 @@ class OledBlanker:
                 bs = BlackScreen(screen)
                 bs.dismissed = self._dismiss_action
                 self.black_screens.append(bs)
-            self.dim_overlays = [DimOverlay(s) for s in self.target_screens]
             self._update_monitor_label()
             names = [s.name() for s in self.target_screens]
             self.tray.showMessage(
@@ -683,8 +652,8 @@ class OledBlanker:
     def cleanup(self):
         """Cleanup on exit."""
         if self.dimmed:
-            for overlay in self.dim_overlays:
-                overlay.hide()
+            for screen in self.target_screens:
+                self.platform.set_brightness(screen.name(), 100)
         if self.night_active:
             self.platform.set_brightness_all(100)
         self.platform.cleanup()
