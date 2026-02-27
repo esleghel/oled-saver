@@ -117,6 +117,8 @@ class OledBlanker:
         self.pause_timer = None
         self.night_active = False
         self._manual_override = False
+        self._mouse_away_timer = None
+        self._mouse_away_ticks = 0
 
         # Signal bridge for external toggle
         self.signal_bridge = SignalBridge()
@@ -138,12 +140,8 @@ class OledBlanker:
         # Setup system tray
         self._setup_tray()
 
-        # Setup idle detection via platform
-        self.platform.setup_idle(
-            self.config.timeout_seconds,
-            self._try_idle_action,
-            self._on_idle_resume,
-        )
+        # Setup trigger mode (idle or mouse-away)
+        self._start_trigger_mode()
 
         # Setup night mode
         self._setup_night_mode()
@@ -231,6 +229,20 @@ class OledBlanker:
             self._show_dim_brightness_dialog
         )
         self._update_idle_action_checks()
+
+        mode_menu = menu.addMenu("⚡ Mode")
+        self.mode_idle_action = mode_menu.addAction("Idle timeout")
+        self.mode_idle_action.setCheckable(True)
+        self.mode_idle_action.triggered.connect(lambda: self._switch_trigger_mode("idle"))
+        self.mode_mouse_away_action = mode_menu.addAction("Mouse away")
+        self.mode_mouse_away_action.setCheckable(True)
+        self.mode_mouse_away_action.triggered.connect(lambda: self._switch_trigger_mode("mouse_away"))
+        mode_menu.addSeparator()
+        self.mouse_away_delay_action = mode_menu.addAction(
+            f"Mouse away delay ({self.config.mouse_away_delay_seconds}s)..."
+        )
+        self.mouse_away_delay_action.triggered.connect(self._show_mouse_away_delay_dialog)
+        self._update_mode_checks()
 
         menu.addSeparator()
 
@@ -406,6 +418,74 @@ class OledBlanker:
             self._dismiss_action()
         self._dim_mouse_pos = pos
 
+    # --- Trigger Mode (idle vs mouse-away) ---
+
+    def _start_trigger_mode(self):
+        """Start the configured trigger mode."""
+        if self.config.trigger_mode == "mouse_away":
+            self._setup_mouse_away()
+        else:
+            self.platform.setup_idle(
+                self.config.timeout_seconds,
+                self._try_idle_action,
+                self._on_idle_resume,
+            )
+
+    def _switch_trigger_mode(self, mode):
+        """Switch between idle and mouse-away trigger modes."""
+        self._dismiss_action()
+        # Stop current mode
+        if self.config.trigger_mode == "mouse_away":
+            self._stop_mouse_away()
+        else:
+            self.platform.stop_idle()
+        # Apply new mode
+        self.config.trigger_mode = mode
+        self.config.save()
+        self._start_trigger_mode()
+        self._update_mode_checks()
+
+    def _setup_mouse_away(self):
+        """Start mouse-away detection via QCursor polling."""
+        self._mouse_away_ticks = 0
+        self._mouse_away_timer = QTimer()
+        self._mouse_away_timer.setInterval(500)
+        self._mouse_away_timer.timeout.connect(self._poll_mouse_away)
+        self._mouse_away_timer.start()
+        print(f"Trigger: mouse-away (delay: {self.config.mouse_away_delay_seconds}s)")
+
+    def _stop_mouse_away(self):
+        """Stop mouse-away detection."""
+        if self._mouse_away_timer:
+            self._mouse_away_timer.stop()
+            self._mouse_away_timer = None
+
+    def _is_cursor_on_target(self):
+        """Check if cursor is within any target screen geometry."""
+        pos = QCursor.pos()
+        for screen in self.target_screens:
+            if screen.geometry().contains(pos):
+                return True
+        return False
+
+    def _poll_mouse_away(self):
+        """Poll cursor position for mouse-away detection."""
+        if self.paused:
+            self._mouse_away_ticks = 0
+            return
+        if self._is_cursor_on_target():
+            self._mouse_away_ticks = 0
+            if self.blanked or self.dimmed:
+                self._dismiss_action()
+        else:
+            self._mouse_away_ticks += 1
+            needed = self.config.mouse_away_delay_seconds * 2  # 500ms intervals
+            if self._mouse_away_ticks >= needed and not self.blanked and not self.dimmed:
+                if self.config.idle_action == "dim":
+                    self._do_dim()
+                else:
+                    self._do_blank()
+
     def _toggle_pause(self):
         """Toggle pause state."""
         self.paused = not self.paused
@@ -514,6 +594,35 @@ class OledBlanker:
             self.tray.showMessage(
                 "OLED Saver",
                 f"Dim brightness: {pct}%",
+                QSystemTrayIcon.MessageIcon.Information,
+                2000,
+            )
+
+    def _update_mode_checks(self):
+        """Update checkmarks on trigger mode menu items."""
+        is_mouse_away = self.config.trigger_mode == "mouse_away"
+        self.mode_idle_action.setChecked(not is_mouse_away)
+        self.mode_mouse_away_action.setChecked(is_mouse_away)
+        self.timeout_action.setEnabled(not is_mouse_away)
+
+    def _show_mouse_away_delay_dialog(self):
+        """Show dialog to set mouse-away delay."""
+        seconds, ok = QInputDialog.getInt(
+            None,
+            "Mouse Away Delay",
+            "Delay (seconds):",
+            self.config.mouse_away_delay_seconds,
+            5,    # min
+            300,  # max
+            5,    # step
+        )
+        if ok:
+            self.config.mouse_away_delay_seconds = seconds
+            self.config.save()
+            self.mouse_away_delay_action.setText(f"Mouse away delay ({seconds}s)...")
+            self.tray.showMessage(
+                "OLED Saver",
+                f"Mouse away delay: {seconds}s",
                 QSystemTrayIcon.MessageIcon.Information,
                 2000,
             )
@@ -644,6 +753,7 @@ class OledBlanker:
     def _quit(self):
         """Clean shutdown."""
         self._dismiss_action()
+        self._stop_mouse_away()
         if self.night_active:
             self._restore_brightness()
         self.platform.cleanup()
@@ -651,6 +761,7 @@ class OledBlanker:
 
     def cleanup(self):
         """Cleanup on exit."""
+        self._stop_mouse_away()
         if self.dimmed:
             for screen in self.target_screens:
                 self.platform.set_brightness(screen.name(), 100)

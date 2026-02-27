@@ -18,6 +18,8 @@ class Config:
         self.pause_duration_minutes = 30
         self.idle_action = "blank"  # "blank" or "dim"
         self.dim_brightness = 10
+        self.trigger_mode = "idle"  # "idle" or "mouse_away"
+        self.mouse_away_delay_seconds = 30
         self.night_mode_enabled = True
         self.night_mode_start = "22:00"
         self.night_mode_end = "07:00"
@@ -44,6 +46,10 @@ class Config:
         )
         self.idle_action = s.get("idle_action", self.idle_action)
         self.dim_brightness = int(s.get("dim_brightness", self.dim_brightness))
+        self.trigger_mode = s.get("trigger_mode", self.trigger_mode)
+        self.mouse_away_delay_seconds = int(
+            s.get("mouse_away_delay_seconds", self.mouse_away_delay_seconds)
+        )
 
     def save(self):
         cp = configparser.ConfigParser()
@@ -58,6 +64,8 @@ class Config:
             "night_mode_brightness": str(self.night_mode_brightness),
             "idle_action": self.idle_action,
             "dim_brightness": str(self.dim_brightness),
+            "trigger_mode": self.trigger_mode,
+            "mouse_away_delay_seconds": str(self.mouse_away_delay_seconds),
         }
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_FILE, "w") as f:
