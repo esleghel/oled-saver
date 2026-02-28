@@ -43,10 +43,13 @@ class KDEPlatform(LinuxPlatform):
     # --- Media Detection (KDE inhibitors + MPRIS) ---
 
     def is_media_playing(self):
-        """Check KDE idle inhibitors first, then fall back to MPRIS."""
+        """Check KDE idle inhibitors, audio streams, then MPRIS."""
         if self._is_idle_inhibited():
+            print("Media detected: KDE idle inhibited")
             return True
-        return super().is_media_playing()
+        if self._is_audio_playing():
+            return True
+        return self._check_mpris()
 
     def _is_idle_inhibited(self):
         """Check if KDE PowerDevil has active screen-change inhibitions."""

@@ -194,9 +194,37 @@ class LinuxPlatform(Platform):
         except Exception:
             return []
 
-    # --- Media Detection (MPRIS D-Bus) ---
+    # --- Media Detection (audio streams + MPRIS D-Bus) ---
 
     def is_media_playing(self):
+        if self._is_audio_playing():
+            return True
+        return self._check_mpris()
+
+    def _is_audio_playing(self):
+        """Check for active audio streams via PulseAudio/PipeWire."""
+        try:
+            result = subprocess.run(
+                ["pactl", "list", "sink-inputs"],
+                capture_output=True, text=True, timeout=3,
+            )
+            # An uncorked sink-input means an app is actively outputting audio
+            in_entry = False
+            for line in result.stdout.splitlines():
+                if line.startswith("Sink Input #"):
+                    in_entry = True
+                elif in_entry and "Corked: no" in line:
+                    print("Media detected: active audio stream (pactl)")
+                    return True
+            return False
+        except FileNotFoundError:
+            return False
+        except Exception as e:
+            print(f"pactl check failed: {e}", file=__import__("sys").stderr)
+            return False
+
+    def _check_mpris(self):
+        """Check MPRIS D-Bus for any player with PlaybackStatus=Playing."""
         try:
             result = subprocess.run(
                 ["dbus-send", "--print-reply", "--dest=org.freedesktop.DBus",
@@ -223,7 +251,7 @@ class LinuxPlatform(Platform):
                     capture_output=True, text=True, timeout=2,
                 )
                 if '"Playing"' in status_result.stdout:
-                    print(f"Media playing: {player}")
+                    print(f"Media detected: MPRIS {player}")
                     return True
             return False
         except Exception as e:

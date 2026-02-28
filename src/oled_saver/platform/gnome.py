@@ -97,10 +97,13 @@ class GNOMEPlatform(LinuxPlatform):
     # --- Media Detection (GNOME session inhibitors + MPRIS) ---
 
     def is_media_playing(self):
-        """Check GNOME idle inhibitors first, then fall back to MPRIS."""
+        """Check GNOME idle inhibitors, audio streams, then MPRIS."""
         if self._is_idle_inhibited():
+            print("Media detected: GNOME idle inhibited")
             return True
-        return super().is_media_playing()
+        if self._is_audio_playing():
+            return True
+        return self._check_mpris()
 
     def _is_idle_inhibited(self):
         """Check if GNOME session has active idle inhibitors (flag 8)."""
