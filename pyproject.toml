@@ -1,6 +1,6 @@
 [project]
 name = "oled-saver"
-version = "1.1.0"
+version = "1.1.1"
 description = "Prevent OLED burn-in by blanking or dimming idle monitors"
 readme = "README.md"
 license = "GPL-3.0-only"
