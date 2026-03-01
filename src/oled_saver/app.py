@@ -27,6 +27,7 @@ def _setup_logging():
     return log_file
 
 _log_file = _setup_logging()
+log = logging.getLogger(__name__)
 
 try:
     from datetime import datetime
@@ -105,6 +106,8 @@ class SignalBridge(QObject):
 class OledBlanker:
     """Main application controller."""
 
+    MEDIA_RETRY_INTERVAL_MS = 30_000  # Retry blank every 30s when media blocks it
+
     def __init__(self, app, platform):
         self.app = app
         self.platform = platform
@@ -119,6 +122,7 @@ class OledBlanker:
         self._manual_override = False
         self._mouse_away_timer = None
         self._mouse_away_ticks = 0
+        self._media_retry_timer = None
 
         # Signal bridge for external toggle
         self.signal_bridge = SignalBridge()
@@ -127,7 +131,7 @@ class OledBlanker:
         # Detect target monitors
         self.target_screens = self._find_target_screens()
         if not self.target_screens:
-            print("ERROR: No target monitor found. Exiting.", file=sys.stderr)
+            log.error("No target monitor found. Exiting.")
             sys.exit(1)
 
         # Create black screen widgets (one per target)
@@ -162,7 +166,7 @@ class OledBlanker:
         elif self.config.monitor == "auto":
             if oled_monitors:
                 target_connectors = [name for name, _ in oled_monitors]
-                print(f"Auto-detected OLED(s): {oled_monitors}")
+                log.info("Auto-detected OLED(s): %s", oled_monitors)
             elif all_monitors:
                 dialog = MonitorSelectDialog(all_monitors)
                 if dialog.exec() and dialog.selected_connectors:
@@ -172,7 +176,7 @@ class OledBlanker:
                 else:
                     return []
             else:
-                print("No monitors found.", file=sys.stderr)
+                log.error("No monitors found.")
                 return []
         else:
             target_connectors = self.config.monitor_list
@@ -188,13 +192,13 @@ class OledBlanker:
                         result.append(sobj)
                         break
                 else:
-                    print(f"WARNING: Screen '{conn}' not found. Available: {list(screen_map)}", file=sys.stderr)
+                    log.warning("Screen '%s' not found. Available: %s", conn, list(screen_map))
 
         if not result and screens:
-            print("WARNING: No configured screens found, using primary.", file=sys.stderr)
+            log.warning("No configured screens found, using primary.")
             result = [screens[0]]
 
-        print(f"Target monitors: {[s.name() for s in result]}")
+        log.info("Target monitors: %s", [s.name() for s in result])
         return result
 
     def _setup_tray(self):
@@ -325,21 +329,43 @@ class OledBlanker:
     def _try_idle_action(self):
         """Perform configured idle action (blank or dim), checking exceptions."""
         if self.paused:
+            self._stop_media_retry()
             return
         if self.blanked or self.dimmed:
+            self._stop_media_retry()
             return
         if self.config.check_inhibitors and self.platform.is_media_playing():
-            print("Idle action skipped: media is playing")
+            log.info("Idle action skipped: media is playing (will retry)")
+            self._start_media_retry()
             return
 
+        self._stop_media_retry()
         if self.config.idle_action == "dim":
             self._do_dim()
             self._start_dismiss_watcher()
         else:
             self._do_blank()
 
+    def _start_media_retry(self):
+        """Start periodic retry when idle action was blocked by media."""
+        if self._media_retry_timer is not None:
+            return  # already running
+        self._media_retry_timer = QTimer()
+        self._media_retry_timer.setInterval(self.MEDIA_RETRY_INTERVAL_MS)
+        self._media_retry_timer.timeout.connect(self._try_idle_action)
+        self._media_retry_timer.start()
+        log.debug("Media retry timer started (%ds interval)",
+                  self.MEDIA_RETRY_INTERVAL_MS // 1000)
+
+    def _stop_media_retry(self):
+        """Stop the media retry timer."""
+        if self._media_retry_timer is not None:
+            self._media_retry_timer.stop()
+            self._media_retry_timer = None
+
     def _on_idle_resume(self):
         """Called by idle system on resume — respects manual override."""
+        self._stop_media_retry()
         if self._manual_override:
             return
         self._dismiss_action()
@@ -360,7 +386,7 @@ class OledBlanker:
         for bs in self.black_screens:
             bs.show_on_monitor()
         names = [s.name() for s in self.target_screens]
-        print(f"Screen blanked on {names}")
+        log.info("Screen blanked on %s", names)
 
     def _undo_blank(self):
         """Hide blank screens."""
@@ -369,7 +395,7 @@ class OledBlanker:
         self.blanked = False
         for bs in self.black_screens:
             bs.hide()
-        print("Screen unblanked")
+        log.info("Screen unblanked")
 
     def _do_dim(self):
         """Dim target monitors to configured brightness."""
@@ -380,7 +406,7 @@ class OledBlanker:
         for screen in self.target_screens:
             self.platform.set_brightness(screen.name(), self.config.dim_brightness)
         names = [s.name() for s in self.target_screens]
-        print(f"Screen dimmed to {self.config.dim_brightness}% on {names}")
+        log.info("Screen dimmed to %d%% on %s", self.config.dim_brightness, names)
 
     def _undo_dim(self):
         """Restore target monitors brightness from dim state."""
@@ -392,7 +418,7 @@ class OledBlanker:
         for screen in self.target_screens:
             self.platform.set_brightness(screen.name(), restore_pct)
         names = [s.name() for s in self.target_screens]
-        print(f"Screen undimmed to {restore_pct}% on {names}")
+        log.info("Screen undimmed to %d%% on %s", restore_pct, names)
 
     def _start_dismiss_watcher(self):
         """Start watching for mouse movement to dismiss dim."""
@@ -452,7 +478,7 @@ class OledBlanker:
         self._mouse_away_timer.setInterval(500)
         self._mouse_away_timer.timeout.connect(self._poll_mouse_away)
         self._mouse_away_timer.start()
-        print(f"Trigger: mouse-away (delay: {self.config.mouse_away_delay_seconds}s)")
+        log.info("Trigger: mouse-away (delay: %ds)", self.config.mouse_away_delay_seconds)
 
     def _stop_mouse_away(self):
         """Stop mouse-away detection."""
@@ -694,16 +720,14 @@ class OledBlanker:
         outputs = self.platform.set_brightness_all(self.config.night_mode_brightness)
         self.night_active = True
         self._update_night_toggle_label()
-        print(
-            f"Night mode ON: {self.config.night_mode_brightness}% on {outputs}"
-        )
+        log.info("Night mode ON: %d%% on %s", self.config.night_mode_brightness, outputs)
 
     def _restore_brightness(self):
         """Restore all monitors to full brightness."""
         outputs = self.platform.set_brightness_all(100)
         self.night_active = False
         self._update_night_toggle_label()
-        print(f"Night mode OFF: 100% on {outputs}")
+        log.info("Night mode OFF: 100%% on %s", outputs)
 
     def _toggle_night_mode(self):
         """Toggle night mode enabled/disabled."""
@@ -754,6 +778,7 @@ class OledBlanker:
         """Clean shutdown."""
         self._dismiss_action()
         self._stop_mouse_away()
+        self._stop_media_retry()
         if self.night_active:
             self._restore_brightness()
         self.platform.cleanup()
@@ -762,6 +787,7 @@ class OledBlanker:
     def cleanup(self):
         """Cleanup on exit."""
         self._stop_mouse_away()
+        self._stop_media_retry()
         if self.dimmed:
             for screen in self.target_screens:
                 self.platform.set_brightness(screen.name(), 100)

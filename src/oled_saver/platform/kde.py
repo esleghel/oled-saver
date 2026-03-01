@@ -1,5 +1,6 @@
 """KDE Plasma platform backend for OLED Blanker."""
 
+import logging
 import os
 import signal
 import subprocess
@@ -7,6 +8,8 @@ import subprocess
 from PyQt6.QtCore import QProcess, QTimer
 
 from oled_saver.platform.base import LinuxPlatform
+
+log = logging.getLogger(__name__)
 
 
 class KDEPlatform(LinuxPlatform):
@@ -45,7 +48,7 @@ class KDEPlatform(LinuxPlatform):
     def is_media_playing(self):
         """Check KDE idle inhibitors, audio streams, then MPRIS."""
         if self._is_idle_inhibited():
-            print("Media detected: KDE idle inhibited")
+            log.info("Media detected: KDE idle inhibited")
             return True
         if self._is_audio_playing():
             return True
@@ -81,10 +84,9 @@ class KDEPlatform(LinuxPlatform):
         if swayidle_path:
             self._start_swayidle(swayidle_path)
         else:
-            print(
+            log.warning(
                 "swayidle not found. Using mouse polling fallback.\n"
                 "  Install: sudo apt install swayidle",
-                file=__import__("sys").stderr,
             )
             self._setup_polling_idle()
 
@@ -134,13 +136,12 @@ class KDEPlatform(LinuxPlatform):
         ])
         self._swayidle_process.finished.connect(self._on_swayidle_finished)
         self._swayidle_process.start()
-        print(f"Idle: swayidle (timeout: {self._idle_timeout}s)")
+        log.info("Idle: swayidle (timeout: %ds)", self._idle_timeout)
 
     def _on_swayidle_finished(self, exit_code, exit_status):
         if self._restarting:
             return
-        print(f"swayidle exited (code={exit_code}). Falling back to polling.",
-              file=__import__("sys").stderr)
+        log.warning("swayidle exited (code=%d). Falling back to polling.", exit_code)
         self._setup_polling_idle()
 
     def _handle_idle_signal(self, signum, frame):

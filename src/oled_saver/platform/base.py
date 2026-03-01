@@ -5,6 +5,7 @@ Provides a Platform ABC and a LinuxPlatform base class with shared Linux
 functionality (EDID, MPRIS, signals, PID file, QCursor fallback).
 """
 
+import logging
 import os
 import signal
 import struct
@@ -14,6 +15,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from PyQt6.QtCore import QPoint, QTimer
+
+log = logging.getLogger(__name__)
 
 # Known OLED model patterns
 OLED_KEYWORDS = ["OLED"]
@@ -214,13 +217,13 @@ class LinuxPlatform(Platform):
                 if line.startswith("Sink Input #"):
                     in_entry = True
                 elif in_entry and "Corked: no" in line:
-                    print("Media detected: active audio stream (pactl)")
+                    log.info("Media detected: active audio stream (pactl)")
                     return True
             return False
         except FileNotFoundError:
             return False
         except Exception as e:
-            print(f"pactl check failed: {e}", file=__import__("sys").stderr)
+            log.warning("pactl check failed: %s", e)
             return False
 
     def _check_mpris(self):
@@ -251,11 +254,11 @@ class LinuxPlatform(Platform):
                     capture_output=True, text=True, timeout=2,
                 )
                 if '"Playing"' in status_result.stdout:
-                    print(f"Media detected: MPRIS {player}")
+                    log.info("Media detected: MPRIS %s", player)
                     return True
             return False
         except Exception as e:
-            print(f"MPRIS check failed: {e}", file=__import__("sys").stderr)
+            log.warning("MPRIS check failed: %s", e)
             return False
 
     # --- Idle Detection (QCursor polling fallback) ---
@@ -284,7 +287,7 @@ class LinuxPlatform(Platform):
         self._idle_poll_timer.setInterval(5000)
         self._idle_poll_timer.timeout.connect(self._poll_idle)
         self._idle_poll_timer.start()
-        print(f"Idle: polling mouse position every 5s (timeout: {self._idle_timeout}s)")
+        log.info("Idle: polling mouse position every 5s (timeout: %ds)", self._idle_timeout)
 
     def _poll_idle(self):
         from PyQt6.QtGui import QCursor
